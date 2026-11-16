@@ -383,6 +383,11 @@ function AuthView() {
 export function App() {
   const queryClient = useQueryClient();
   const me = useMe();
+  const [accountDeleted, setAccountDeleted] = useState(false);
+  // A fresh sign-in after a deletion clears the confirmation banner.
+  useEffect(() => {
+    if (me.data?.user) setAccountDeleted(false);
+  }, [me.data?.user]);
   const state = useQuery({
     queryKey: ["state"],
     queryFn: () => api.getState({}),
@@ -461,6 +466,16 @@ export function App() {
         {me.isPending && (
           <p className="py-16 text-center text-[var(--dim)]">Loading…</p>
         )}
+        {me.data && !me.data.user && accountDeleted && (
+          <div className="mx-auto mb-4 max-w-md rounded-[var(--radius)] border-2 border-red-400 bg-[var(--surface)] p-5 text-center">
+            <p className="font-display text-xl">Account deleted.</p>
+            <p className="mt-1 text-sm text-[var(--dim)]">
+              Your account and everything in it — kids, chores, points,
+              and prizes — is gone for good. You can make a fresh account
+              any time.
+            </p>
+          </div>
+        )}
         {me.data && !me.data.user && <AuthView />}
         {me.data?.user && state.isPending && (
           <p className="py-16 text-center text-[var(--dim)]">
@@ -482,7 +497,9 @@ export function App() {
             </button>
           </div>
         )}
-        {me.data?.user && state.data && <Game state={state.data} />}
+        {me.data?.user && state.data && (
+          <Game state={state.data} onDeleted={() => setAccountDeleted(true)} />
+        )}
       </main>
     </div>
   );
@@ -646,7 +663,7 @@ function usePinGate(): PinGate {
   return { token, unlock, lock, poke };
 }
 
-function Game({ state }: { state: State }) {
+function Game({ state, onDeleted }: { state: State; onDeleted: () => void }) {
   const [celebration, setCelebration] = useState<Celebration | null>(null);
   const [burstId, setBurstId] = useState(0);
   const [closetFor, setClosetFor] = useState<number | null>(null);
@@ -738,7 +755,7 @@ function Game({ state }: { state: State }) {
       <TreasureVault state={state} celebrate={celebrate} />
       <RewardShop state={state} pinGate={pinGate} />
       <RecentActivity state={state} />
-      <GrownUpZone state={state} pinGate={pinGate} />
+      <GrownUpZone state={state} pinGate={pinGate} onDeleted={onDeleted} />
     </div>
   );
 }
@@ -1671,7 +1688,7 @@ function RecentActivity({ state }: { state: State }) {
 // the unlock token and the server refuses without a live one, so the
 // lock is real, not just hidden buttons.
 
-function GrownUpZone({ state, pinGate }: { state: State; pinGate: PinGate }) {
+function GrownUpZone({ state, pinGate, onDeleted }: { state: State; pinGate: PinGate; onDeleted: () => void }) {
   const [open, setOpen] = useState(false);
   const waiting = state.pendingVerifications.length;
   const unlocked = pinGate.token != null;
@@ -1714,9 +1731,121 @@ function GrownUpZone({ state, pinGate }: { state: State; pinGate: PinGate }) {
           <ChoreManager state={state} pinToken={pinGate.token} />
           <RewardManager state={state} pinToken={pinGate.token} />
           <ChangePinForm pinToken={pinGate.token} pinGate={pinGate} />
+          <DeleteAccountForm pinToken={pinGate.token} pinGate={pinGate} onDeleted={onDeleted} />
         </div>
       )}
     </section>
+  );
+}
+
+/** Grown-Up Zone only — never on the kid-facing board. Deleting an
+ *  account is permanent: the account, kids, chores, points, prizes,
+ *  quests, and PIN all go. It takes the account password to confirm,
+ *  so a tap or a kid on an unlocked phone can't wipe the account by
+ *  accident — and the server also requires the live PIN unlock when a
+ *  PIN is set. On success the app signs out and shows a plain
+ *  confirmation that the account is gone. */
+function DeleteAccountForm({
+  pinToken,
+  pinGate,
+  onDeleted,
+}: {
+  pinToken: string;
+  pinGate: PinGate;
+  onDeleted: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const del = useMutation({
+    mutationFn: async () => await api.deleteAccount({ password, pinToken }),
+    onSuccess: (data) => {
+      if (!data.ok) {
+        setError(data.error ?? "That didn't work. Try again.");
+        return;
+      }
+      setPassword("");
+      setError(null);
+      // The account is gone: drop the local PIN unlock, then let the
+      // app show the signed-out confirmation.
+      pinGate.lock();
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      queryClient.invalidateQueries({ queryKey: ["state"] });
+      queryClient.invalidateQueries({ queryKey: ["pinStatus"] });
+      onDeleted();
+    },
+    onError: (e) =>
+      setError(e instanceof Error ? e.message : "That didn't work."),
+  });
+  return (
+    <div className="flex flex-col gap-2 rounded-[var(--radius)] border-2 border-red-500/70 bg-[#2a0f0f] p-3">
+      <h4 className="font-display text-sm">🗑️ Delete my account</h4>
+      {!confirming ? (
+        <>
+          <p className="text-sm text-[var(--dim)]">
+            Remove your account and everything in it, for good.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setConfirming(true);
+              setError(null);
+            }}
+            className="self-start rounded-lg border-2 border-red-400 px-4 py-2 text-sm font-black text-red-300"
+          >
+            Delete my account…
+          </button>
+        </>
+      ) : (
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            if (password.length > 0) del.mutate();
+          }}
+        >
+          <p className="text-sm font-semibold">
+            This is permanent and can't be undone. Your account, kids,
+            chores, points, prizes, quests, and PIN will all be deleted.
+            There is no way to get them back.
+          </p>
+          <label className={labelCls}>
+            Type your account password to confirm
+            <input
+              aria-label="Account password to confirm deletion"
+              className={inputCls}
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              disabled={password.length === 0 || del.isPending}
+              className="rounded-lg bg-red-500 px-4 py-2 text-sm font-black text-white disabled:opacity-40"
+            >
+              {del.isPending ? "Deleting…" : "Yes, delete it all"}
+            </button>
+            <button
+              type="button"
+              disabled={del.isPending}
+              onClick={() => {
+                setConfirming(false);
+                setPassword("");
+                setError(null);
+              }}
+              className="rounded-lg bg-[var(--surface-2)] px-4 py-2 text-sm font-black"
+            >
+              Keep my account
+            </button>
+          </div>
+          {error && <p className="text-sm font-semibold text-red-300">{error}</p>}
+        </form>
+      )}
+    </div>
   );
 }
 

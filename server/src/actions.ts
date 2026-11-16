@@ -83,6 +83,8 @@ const MINUTE = 60 * 1000;
 const SIGNUPS_PER_IP_PER_HOUR = 10;
 const SIGNIN_PER_IP_PER_15_MIN = 30;
 const SIGNIN_FAILURES_PER_EMAIL_PER_15_MIN = 10;
+const DELETE_PER_IP_PER_15_MIN = 10;
+const DELETE_FAILURES_PER_EMAIL_PER_15_MIN = 10;
 
 // ---------- date helpers (all in the family's timezone) ----------
 
@@ -1634,6 +1636,78 @@ export const Actions = {
       if (ctx.sessionToken) {
         await deleteSession(ctx.db, ctx.sessionToken);
       }
+      ctx.cookies.push(clearSessionCookie());
+      return { ok: true };
+    },
+  }),
+
+  deleteAccount: defineAction({
+    description:
+      "Permanently deletes the signed-in account and every row that belongs to it — kids, chores, completions, points, prizes, quests, boss battles, crowns, the Grown-Up Zone PIN, and all sessions — then signs the user out. Irreversible. The account password is always required; when a Grown-Up Zone PIN is set, a live unlock token is required too, so the delete can only happen from inside the unlocked zone. Never touches another account's data: every delete is scoped to the signed-in account's own id.",
+    request: z.object({
+      password: z.string().min(1).max(128),
+      pinToken: z.string().max(200).optional(),
+    }),
+    response: z.object({
+      ok: z.boolean(),
+      error: z.string().optional(),
+    }),
+    async handler(ctx, args): Promise<{ ok: boolean; error?: string }> {
+      if (!allow(`delete:ip:${ctx.ip}`, DELETE_PER_IP_PER_15_MIN, 15 * MINUTE)) {
+        return { ok: false, error: "Too many delete attempts from here. Try again in a little while." };
+      }
+      const user = requireUser(ctx);
+      const userId = user.id;
+      if (
+        !allow(
+          `delete:email:${user.email}`,
+          DELETE_FAILURES_PER_EMAIL_PER_15_MIN,
+          15 * MINUTE,
+        )
+      ) {
+        return { ok: false, error: "Too many delete attempts for this account. Try again in a little while." };
+      }
+      const rows = await ctx.db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, userId))
+        .limit(1);
+      const account = rows[0];
+      if (!account) {
+        return { ok: false, error: "That account is already gone." };
+      }
+      // A Grown-Up Zone PIN, when one is set, must be unlocked first —
+      // the delete button only ever shows inside the unlocked zone, and
+      // the live token is the proof. Accounts with no PIN skip this.
+      const auth = await getAuthRow(ctx.db, userId);
+      if (auth) {
+        await requirePinSession(ctx.db, userId, args.pinToken ?? "");
+      }
+      if (!(await verifyPassword(args.password, account.passwordHash))) {
+        return { ok: false, error: "That password is not correct." };
+      }
+      resetLimit(`delete:email:${user.email}`);
+      // Children first, then the account itself — every delete scoped to
+      // this account's id, in one transaction, so the account either
+      // vanishes whole or not at all.
+      await ctx.db.transaction(async (tx) => {
+        const t = tx as unknown as Db;
+        await t.delete(schema.completions).where(eq(schema.completions.userId, userId));
+        await t.delete(schema.bonuses).where(eq(schema.bonuses.userId, userId));
+        await t.delete(schema.penalties).where(eq(schema.penalties.userId, userId));
+        await t.delete(schema.quests).where(eq(schema.quests.userId, userId));
+        await t.delete(schema.lootChests).where(eq(schema.lootChests.userId, userId));
+        await t.delete(schema.redemptions).where(eq(schema.redemptions.userId, userId));
+        await t.delete(schema.rewards).where(eq(schema.rewards.userId, userId));
+        await t.delete(schema.chores).where(eq(schema.chores.userId, userId));
+        await t.delete(schema.players).where(eq(schema.players.userId, userId));
+        await t.delete(schema.bossBattles).where(eq(schema.bossBattles.userId, userId));
+        await t.delete(schema.weekWinners).where(eq(schema.weekWinners.userId, userId));
+        await t.delete(schema.grownupAuth).where(eq(schema.grownupAuth.userId, userId));
+        await t.delete(schema.pinSessions).where(eq(schema.pinSessions.userId, userId));
+        await t.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
+        await t.delete(schema.users).where(eq(schema.users.id, userId));
+      });
       ctx.cookies.push(clearSessionCookie());
       return { ok: true };
     },
