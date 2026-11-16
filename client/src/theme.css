@@ -1,0 +1,241 @@
+@import url('https://fonts.googleapis.com/css2?family=Bungee&display=swap');
+@import "tailwindcss";
+@import "tailwindcss-safe-area";
+
+@theme {
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 16px;
+  --text-base--line-height: 24px;
+  --text-lg: 18px;
+  --text-lg--line-height: 28px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 24px;
+  --text-2xl--line-height: 32px;
+  --text-3xl: 30px;
+  --text-3xl--line-height: 36px;
+  --text-4xl: 36px;
+  --text-4xl--line-height: 40px;
+  --text-5xl: 48px;
+  --text-5xl--line-height: 52px;
+  --font-display: "Bungee", "Avenir Next", system-ui, sans-serif;
+}
+
+/* Blocky adventure look in both modes: a dark underground world of dirt,
+   stone, and wood, with grass-green and crystal accents. Everything is
+   squared off and chunky like crafted blocks. Dark mode digs deeper
+   underground. */
+:root {
+  color-scheme: dark;
+  --bg: #1b1512;
+  --surface: #2a211a;
+  --surface-2: #3a2d21;
+  --text: #ffffff;
+  --dim: #cdbfa8;
+  --border: #6b543a;
+  --accent: #7ac74f;
+  --radius: 4px;
+  --space-surface: var(--surface);
+  --space-surface-alt: var(--surface-2);
+  --space-muted: var(--dim);
+  --space-border: var(--border);
+  --space-accent: var(--accent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #120e0b;
+    --surface: #1f1813;
+    --surface-2: #2b2119;
+    --border: #54402c;
+  }
+}
+
+/* The world itself is the background now: App.tsx fixes the blocky
+   world scene (sky, grass hills, ore underground) behind everything. */
+
+/* Phone tap targets: at least 32px tall. */
+@layer base {
+  button, [role="button"], select, summary, input:not([type="checkbox"], [type="radio"]) {
+    min-height: 2rem;
+  }
+}
+
+/* ---- Fun-pass animations: celebrations, boss, loot, avatars ---- */
+
+@keyframes cc-confetti-fall {
+  0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(105vh) rotate(720deg); opacity: 0.6; }
+}
+@keyframes cc-pop-in {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes cc-boss-idle {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-6px) scale(1.03); }
+}
+@keyframes cc-boss-hit {
+  0% { transform: translateX(0) rotate(0deg); }
+  20% { transform: translateX(-8px) rotate(-4deg); }
+  40% { transform: translateX(8px) rotate(4deg); }
+  60% { transform: translateX(-6px) rotate(-3deg); }
+  80% { transform: translateX(6px) rotate(3deg); }
+  100% { transform: translateX(0) rotate(0deg); }
+}
+@keyframes cc-float-up {
+  0% { transform: translateY(6px); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateY(-46px); opacity: 0; }
+}
+@keyframes cc-chest-wiggle {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(-6deg) scale(1.06); }
+  75% { transform: rotate(6deg) scale(1.06); }
+}
+@keyframes cc-aura {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(255, 210, 63, 0.55), 0 0 18px 4px rgba(255, 140, 0, 0.45); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 210, 63, 0.9), 0 0 28px 10px rgba(255, 140, 0, 0.7); }
+}
+@keyframes cc-pulse-border {
+  0%, 100% { border-color: rgba(122, 199, 79, 0.45); }
+  50% { border-color: rgba(122, 199, 79, 1); }
+}
+@keyframes cc-item-drop {
+  0% { transform: translateY(-14px); opacity: 0; }
+  60% { transform: translateY(2px); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes cc-glow-flash {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.6); }
+}
+
+.cc-confetti-piece {
+  position: absolute;
+  top: -4vh;
+  border-radius: 1px;
+  animation-name: cc-confetti-fall;
+  animation-timing-function: ease-in;
+  animation-fill-mode: forwards;
+}
+.cc-pop-in { animation: cc-pop-in 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.cc-boss-idle { animation: cc-boss-idle 2.6s ease-in-out infinite; display: inline-block; }
+.cc-boss-hit { animation: cc-boss-hit 0.5s ease-in-out; display: inline-block; }
+.cc-float-up { animation: cc-float-up 1.4s ease-out forwards; }
+.cc-chest-wiggle { animation: cc-chest-wiggle 0.9s ease-in-out infinite; display: inline-block; }
+.cc-aura { animation: cc-aura 1.6s ease-in-out infinite; }
+.cc-pulse-border { animation: cc-pulse-border 1.8s ease-in-out infinite; }
+.cc-item-drop { animation: cc-item-drop 0.35s ease-out both; }
+.cc-glow-flash { animation: cc-glow-flash 0.6s ease-in-out; }
+
+/* ---- Living world background: clouds, torches, lava, particles ----
+   Pure transform/opacity, GPU-friendly, deliberately low opacity so
+   cards and text on top stay readable. All of it sits behind content. */
+
+@keyframes cc-cloud-drift {
+  from { transform: translateX(-35vw); }
+  to { transform: translateX(115vw); }
+}
+@keyframes cc-torch-flicker {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  18% { opacity: 0.95; transform: scale(1.12, 1.22); }
+  36% { opacity: 0.62; transform: scale(0.94, 1.02); }
+  54% { opacity: 1; transform: scale(1.08, 1.18); }
+  72% { opacity: 0.7; transform: scale(0.98, 1.06); }
+  86% { opacity: 0.9; transform: scale(1.05, 1.14); }
+}
+@keyframes cc-torch-glow-pulse {
+  0%, 100% { opacity: 0.28; transform: scale(1); }
+  30% { opacity: 0.5; transform: scale(1.18); }
+  55% { opacity: 0.34; transform: scale(1.04); }
+  80% { opacity: 0.46; transform: scale(1.12); }
+}
+@keyframes cc-lava-pulse {
+  0%, 100% { opacity: 0.32; transform: translateX(-2%) scaleY(1); }
+  50% { opacity: 0.58; transform: translateX(2%) scaleY(1.12); }
+}
+@keyframes cc-lava-shimmer {
+  0%, 100% { opacity: 0.12; }
+  50% { opacity: 0.3; }
+}
+@keyframes cc-particle-rise {
+  0% { transform: translate3d(0, 0, 0); opacity: 0; }
+  10% { opacity: var(--cc-particle-opacity, 0.7); }
+  55% { transform: translate3d(var(--cc-sway, 10px), -46vh, 0); opacity: var(--cc-particle-opacity, 0.7); }
+  100% { transform: translate3d(calc(var(--cc-sway, 10px) * -0.6), -92vh, 0); opacity: 0; }
+}
+@keyframes cc-firefly-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); opacity: 0.15; }
+  25% { opacity: 0.85; }
+  50% { transform: translate3d(14px, -18px, 0); opacity: 0.3; }
+  75% { opacity: 0.9; }
+}
+@keyframes cc-sun-glow {
+  0%, 100% { opacity: 0.18; transform: scale(1); }
+  50% { opacity: 0.3; transform: scale(1.06); }
+}
+
+.cc-live-cloud {
+  position: absolute;
+  left: 0;
+  will-change: transform;
+  animation-name: cc-cloud-drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  image-rendering: pixelated;
+}
+.cc-live-torch-flame {
+  transform-origin: 50% 100%;
+  animation: cc-torch-flicker 1.15s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.cc-live-torch-glow {
+  animation: cc-torch-glow-pulse 1.7s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.cc-live-lava {
+  animation: cc-lava-pulse 4.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.cc-live-lava-shimmer {
+  animation: cc-lava-shimmer 2.8s ease-in-out infinite;
+}
+.cc-live-particle {
+  position: absolute;
+  bottom: -2vh;
+  will-change: transform, opacity;
+  animation-name: cc-particle-rise;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.cc-live-firefly {
+  position: absolute;
+  will-change: transform, opacity;
+  animation: cc-firefly-drift 6s ease-in-out infinite;
+}
+.cc-live-sun-glow {
+  animation: cc-sun-glow 5s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-confetti-piece, .cc-pop-in, .cc-boss-idle, .cc-boss-hit,
+  .cc-float-up, .cc-chest-wiggle, .cc-aura, .cc-pulse-border,
+  .cc-item-drop, .cc-glow-flash {
+    animation: none;
+  }
+  /* Living world goes still: no drifting, flickering, or floating.
+     Keep a faint static lava warmth; hide moving layers entirely. */
+  .cc-live-cloud, .cc-live-particle, .cc-live-firefly {
+    display: none !important;
+  }
+  .cc-live-torch-flame, .cc-live-torch-glow, .cc-live-lava,
+  .cc-live-lava-shimmer, .cc-live-sun-glow {
+    animation: none !important;
+  }
+}
