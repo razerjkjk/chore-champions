@@ -13,6 +13,7 @@
 // (resetDaily) additionally crowns last week's Star Champion and expires
 // stale quests.
 
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Db } from "./db";
 import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
@@ -22,12 +23,14 @@ import {
   clearSessionCookie,
   deleteSession,
   hashPassword,
+  hashToken,
   isValidEmail,
   sessionCookie,
   verifyPassword,
   type SessionStore,
   type SessionUser,
 } from "./auth";
+import { sendPasswordResetEmail } from "./email";
 import { allow, reset as resetLimit } from "./ratelimit";
 
 /** Fallback timezone; real play uses the account's own timezone. */
@@ -85,6 +88,14 @@ const SIGNIN_PER_IP_PER_15_MIN = 30;
 const SIGNIN_FAILURES_PER_EMAIL_PER_15_MIN = 10;
 const DELETE_PER_IP_PER_15_MIN = 10;
 const DELETE_FAILURES_PER_EMAIL_PER_15_MIN = 10;
+// Password resets: a link lives 1 hour and works once. Requests are
+// capped per IP and per email; over the cap the caller still gets the
+// same generic message, so the cap never leaks whether an email has
+// an account.
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
+const RESET_REQUEST_PER_IP_PER_15_MIN = 10;
+const RESET_REQUEST_PER_EMAIL_PER_HOUR = 5;
+const RESET_ATTEMPTS_PER_IP_PER_15_MIN = 10;
 
 // ---------- date helpers (all in the family's timezone) ----------
 
@@ -1489,6 +1500,19 @@ const authResultSchema = z.object({
     .optional(),
 });
 
+// Forgot-password answers: the request always says the same thing
+// whether or not the email has an account (no enumeration), and the
+// reset itself answers ok true/false with a generic failure message.
+const passwordResetRequestSchema = z.object({
+  ok: z.literal(true),
+  message: z.string(),
+});
+
+const passwordResetSchema = z.object({
+  ok: z.boolean(),
+  error: z.string().optional(),
+});
+
 /** Server-side daily reset: settles every account's finished days. */
 export async function runDailyResetForAll(db: Db): Promise<void> {
   const users = await db
@@ -1628,6 +1652,102 @@ export const Actions = {
     },
   }),
 
+  requestPasswordReset: defineAction({
+    description:
+      "Forgot-password request: enter the account email and, if an account uses it, a single-use reset link good for 1 hour goes out through Resend. The answer is always the same generic message whether or not the email has an account, so it never leaks which emails are registered. The raw token is never stored or logged — only its SHA-256 hash lives in the database.",
+    request: z.object({
+      email: z.string().trim().max(120),
+    }),
+    response: passwordResetRequestSchema,
+    async handler(ctx, args): Promise<z.infer<typeof passwordResetRequestSchema>> {
+      const generic =
+        "If an account uses that email, a reset link is on its way — it works once and expires in 1 hour.";
+      const email = args.email.toLowerCase();
+      // Over the cap: still the generic message, so the cap never leaks
+      // whether the email has an account.
+      if (!allow(`resetreq:ip:${ctx.ip}`, RESET_REQUEST_PER_IP_PER_15_MIN, 15 * MINUTE)) {
+        return { ok: true as const, message: generic };
+      }
+      if (!allow(`resetreq:email:${email}`, RESET_REQUEST_PER_EMAIL_PER_HOUR, HOUR)) {
+        return { ok: true as const, message: generic };
+      }
+      if (!isValidEmail(email)) {
+        return { ok: true as const, message: generic };
+      }
+      const rows = await ctx.db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.email, email))
+        .limit(1);
+      const user = rows[0];
+      if (!user) {
+        return { ok: true as const, message: generic };
+      }
+      // One live token per account: a fresh request replaces any unused one.
+      await ctx.db
+        .delete(schema.passwordResets)
+        .where(eq(schema.passwordResets.userId, user.id));
+      const token = randomBytes(32).toString("hex");
+      const now = new Date();
+      await ctx.db.insert(schema.passwordResets).values({
+        userId: user.id,
+        tokenHash: hashToken(token),
+        createdAt: now,
+        expiresAt: new Date(now.getTime() + PASSWORD_RESET_TTL_MS),
+        usedAt: null,
+      });
+      const base = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+      const resetUrl = `${base}/reset-password?token=${token}`;
+      await sendPasswordResetEmail({ to: email, resetUrl });
+      return { ok: true as const, message: generic };
+    },
+  }),
+
+  resetPassword: defineAction({
+    description:
+      "Completes a forgot-password reset: a valid, unused, unexpired token plus a new password (at least 8 characters). The token is single-use — it is consumed on success — and every session for the account is ended, so the new password is needed everywhere. A bad, reused, or expired token gets the same generic failure.",
+    request: z.object({
+      token: z.string().min(1).max(200),
+      newPassword: z.string().min(8).max(128),
+    }),
+    response: passwordResetSchema,
+    async handler(ctx, args): Promise<z.infer<typeof passwordResetSchema>> {
+      const invalid = {
+        ok: false,
+        error:
+          "That reset link is not valid or has expired. Ask for a new one from the sign-in screen.",
+      } as const;
+      if (!allow(`reset:ip:${ctx.ip}`, RESET_ATTEMPTS_PER_IP_PER_15_MIN, 15 * MINUTE)) {
+        return invalid;
+      }
+      const rows = await ctx.db
+        .select()
+        .from(schema.passwordResets)
+        .where(eq(schema.passwordResets.tokenHash, hashToken(args.token)))
+        .limit(1);
+      const record = rows[0];
+      if (!record || record.usedAt) {
+        return invalid;
+      }
+      if (record.expiresAt.getTime() < Date.now()) {
+        return invalid;
+      }
+      const passwordHash = await hashPassword(args.newPassword);
+      await ctx.db.transaction(async (tx) => {
+        const t = tx as unknown as Db;
+        await t
+          .update(schema.users)
+          .set({ passwordHash })
+          .where(eq(schema.users.id, record.userId));
+        // Consume the token and end every session: the new password is
+        // needed everywhere from here on.
+        await t.delete(schema.passwordResets).where(eq(schema.passwordResets.userId, record.userId));
+        await t.delete(schema.sessions).where(eq(schema.sessions.userId, record.userId));
+      });
+      return { ok: true as const };
+    },
+  }),
+
   signOut: defineAction({
     description: "Signs out, ending the current session.",
     request: z.object({}),
@@ -1705,6 +1825,7 @@ export const Actions = {
         await t.delete(schema.weekWinners).where(eq(schema.weekWinners.userId, userId));
         await t.delete(schema.grownupAuth).where(eq(schema.grownupAuth.userId, userId));
         await t.delete(schema.pinSessions).where(eq(schema.pinSessions.userId, userId));
+        await t.delete(schema.passwordResets).where(eq(schema.passwordResets.userId, userId));
         await t.delete(schema.sessions).where(eq(schema.sessions.userId, userId));
         await t.delete(schema.users).where(eq(schema.users.id, userId));
       });

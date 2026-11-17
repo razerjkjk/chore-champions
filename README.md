@@ -109,6 +109,11 @@ migrations on startup. Default database path is `./data/app.db`.
 | `CLIENT_DIR` | `dist/client` | Built client directory. |
 | `MIGRATIONS_DIR` | `drizzle/` | Drizzle migration files. |
 | `SESSION_COOKIE_SECURE` | _(unset)_ | Set to `1` when the app is served over HTTPS so the session cookie is only sent over secure connections. Leave unset for plain-HTTP local runs. |
+| `APP_URL` | `http://localhost:3000` | Public URL of the app. Forgot-password emails link back here. |
+| `RESEND_API_KEY` | _(unset)_ | Resend API key for forgot-password emails. Without it the reset flow still answers, but no email goes out. |
+| `RESEND_FROM` | _(unset)_ | Sender address for reset emails, e.g. `Chore Champions <noreply@yourdomain.com>`. Resend only delivers to arbitrary recipients from a **verified domain**; until a domain is verified, mail only reaches the account owner's own address. |
+
+Forgot-password: the sign-in screen has a "Forgot password?" link. A reset link is single-use, good for 1 hour, and is emailed through Resend (see the rows above). Set `APP_URL` to the live site URL or the emailed link points at localhost.
 
 Endpoints: `GET /` (the app), `GET /health` (returns `{"ok":true}` —
 use it as the host health check), `POST /actions` (`{action, args}`).

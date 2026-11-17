@@ -66,6 +66,29 @@ export const sessions = sqliteTable(
   ],
 );
 
+export const passwordResets = sqliteTable(
+  "password_resets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    /** SHA-256 hash of the reset token. The raw token is only ever in
+     *  the email link — never stored, never logged. */
+    tokenHash: text("token_hash").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    /** Single-use links live 1 hour. */
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    usedAt: integer("used_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    uniqueIndex("password_resets_token_hash_idx").on(t.tokenHash),
+    index("password_resets_user_id_idx").on(t.userId),
+  ],
+);
+
 export const players = sqliteTable(
   "players",
   {

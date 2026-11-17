@@ -277,11 +277,12 @@ function useMe() {
 
 function AuthView() {
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [forgotMessage, setForgotMessage] = useState<string | null>(null);
   const auth = useMutation({
     mutationFn: async () => {
       if (mode === "signup") {
@@ -302,6 +303,86 @@ function AuthView() {
     onError: (e) =>
       setError(e instanceof Error ? e.message : "Could not reach the server."),
   });
+  const forgot = useMutation({
+    mutationFn: async () => await api.requestPasswordReset({ email }),
+    onSuccess: (data) => {
+      setForgotMessage(data.message);
+      setError(null);
+    },
+    onError: (e) =>
+      setError(e instanceof Error ? e.message : "Could not reach the server."),
+  });
+  // ----- Forgot password: a reset link by email, single-use, 1 hour -----
+  if (mode === "forgot") {
+    return (
+      <div className="mx-auto max-w-md rounded-[var(--radius)] border-2 border-[var(--accent)] bg-[var(--surface)] p-5">
+        <h2 className="font-display text-xl">Forgot your password?</h2>
+        <p className="mt-1 text-sm text-[var(--dim)]">
+          Type the email you signed up with. If an account uses it, a reset
+          link is on its way — it works once and expires in 1 hour.
+        </p>
+        {forgotMessage ? (
+          <div className="mt-4 flex flex-col gap-3">
+            <p className="text-sm font-bold text-emerald-300">{forgotMessage}</p>
+            <p className="text-sm text-[var(--dim)]">
+              Check your inbox (and the spam folder) for the link.
+            </p>
+            <button
+              type="button"
+              className="rounded-lg bg-[var(--accent)] px-5 py-2 font-black text-black"
+              onClick={() => {
+                setMode("signin");
+                setForgotMessage(null);
+                setError(null);
+              }}
+            >
+              Back to sign in
+            </button>
+          </div>
+        ) : (
+          <form
+            className="mt-4 flex flex-col gap-3"
+            onSubmit={(e: FormEvent) => {
+              e.preventDefault();
+              setError(null);
+              forgot.mutate();
+            }}
+          >
+            <label className={labelCls}>
+              Email
+              <input
+                className={inputCls}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+              />
+            </label>
+            {error && <p className="text-sm font-semibold text-red-400">{error}</p>}
+            <button
+              type="submit"
+              disabled={forgot.isPending}
+              className="rounded-lg bg-[var(--accent)] px-5 py-2 font-black text-black disabled:opacity-60"
+            >
+              {forgot.isPending ? "One moment…" : "Send reset link"}
+            </button>
+          </form>
+        )}
+        {!forgotMessage && (
+          <button
+            type="button"
+            className="mt-3 text-sm font-bold text-[var(--dim)] underline"
+            onClick={() => {
+              setMode("signin");
+              setError(null);
+            }}
+          >
+            Back to sign in
+          </button>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="mx-auto max-w-md rounded-[var(--radius)] border-2 border-[var(--accent)] bg-[var(--surface)] p-5">
       <h2 className="font-display text-xl">
@@ -363,6 +444,19 @@ function AuthView() {
               ? "Create account"
               : "Sign in"}
         </button>
+        {mode === "signin" && (
+          <button
+            type="button"
+            className="self-start text-sm font-bold text-[var(--dim)] underline"
+            onClick={() => {
+              setMode("forgot");
+              setError(null);
+              setForgotMessage(null);
+            }}
+          >
+            Forgot password?
+          </button>
+        )}
       </form>
       <button
         type="button"
@@ -376,6 +470,110 @@ function AuthView() {
           ? "Already have an account? Sign in"
           : "New here? Make an account"}
       </button>
+    </div>
+  );
+}
+
+// ---------------- Reset-password page (from the emailed link) ----------------
+// The link lands on /reset-password?token=… — the server's single-page
+// fallback serves the app shell, and this page reads the token from the
+// URL. The token works once and expires after 1 hour; a bad, reused, or
+// expired token gets the server's generic message. Nothing here ever
+// shows or stores the token beyond the submit.
+/** Reset-password page (from the emailed link). */
+function ResetPasswordPage() {
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const reset = useMutation({
+    mutationFn: async () =>
+      await api.resetPassword({ token, newPassword: password }),
+    onSuccess: (data) => {
+      if (!data.ok) {
+        setError(data.error ?? "That reset link didn't work.");
+        return;
+      }
+      setError(null);
+      setDone(true);
+    },
+    onError: (e) =>
+      setError(e instanceof Error ? e.message : "Could not reach the server."),
+  });
+  const mismatch = confirm !== "" && password !== confirm;
+  const ready = token !== "" && password.length >= 8 && password === confirm;
+  return (
+    <div className="mx-auto max-w-md rounded-[var(--radius)] border-2 border-[var(--accent)] bg-[var(--surface)] p-5">
+      <h2 className="font-display text-xl">Set a new password</h2>
+      <p className="mt-1 text-sm text-[var(--dim)]">
+        Pick a new password for your family's account — at least 8
+        characters. The link works once and expires in 1 hour.
+      </p>
+      {done ? (
+        <div className="mt-4 flex flex-col gap-3">
+          <p className="text-sm font-bold text-emerald-300">
+            ✅ Password changed — sign in with your new password.
+          </p>
+          <button
+            type="button"
+            className="rounded-lg bg-[var(--accent)] px-5 py-2 font-black text-black"
+            onClick={() => {
+              window.location.href = "/";
+            }}
+          >
+            Back to sign in
+          </button>
+        </div>
+      ) : (
+        <form
+          className="mt-4 flex flex-col gap-3"
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            setError(null);
+            if (ready) reset.mutate();
+          }}
+        >
+          <label className={labelCls}>
+            New password
+            <input
+              className={inputCls}
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+          <label className={labelCls}>
+            Type it again
+            <input
+              className={inputCls}
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+            />
+          </label>
+          {password !== "" && password.length < 8 && (
+            <p className="text-sm font-semibold text-amber-300">
+              At least 8 characters.
+            </p>
+          )}
+          {mismatch && (
+            <p className="text-sm font-semibold text-red-400">
+              The two passwords don't match yet.
+            </p>
+          )}
+          {error && <p className="text-sm font-semibold text-red-400">{error}</p>}
+          <button
+            type="submit"
+            disabled={!ready || reset.isPending}
+            className="rounded-lg bg-[var(--accent)] px-5 py-2 font-black text-black disabled:opacity-60"
+          >
+            {reset.isPending ? "One moment…" : "Set new password"}
+          </button>
+        </form>
+      )}
     </div>
   );
 }
@@ -399,6 +597,22 @@ export function App() {
     queryClient.invalidateQueries({ queryKey: ["me"] });
     queryClient.invalidateQueries({ queryKey: ["state"] });
   };
+
+  // The emailed reset link lands here: /reset-password?token=… — the
+  // server's single-page fallback serves the app shell, and this page
+  // takes over instead of the sign-in screen or the board.
+  if (window.location.pathname === "/reset-password") {
+    return (
+      <div className="relative min-h-screen bg-[var(--bg)] text-[var(--text)]">
+        <div className="relative z-10 mx-auto max-w-3xl px-3 py-6">
+          <header className="mb-6 text-center">
+            <h1 className="font-display text-3xl">🏆 Chore Champions</h1>
+          </header>
+          <ResetPasswordPage />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen bg-[var(--bg)] text-[var(--text)]">
@@ -1708,6 +1922,12 @@ function GrownUpZone({ state, pinGate, onDeleted }: { state: State; pinGate: Pin
         )}{" "}
         {open ? "▲" : "▼"}
       </button>
+      {!unlocked && (
+        <p className="mt-2 text-sm font-semibold text-[var(--dim)]">
+          Forgot the PIN? Open the zone — you can reset it in there with
+          your recovery phrase.
+        </p>
+      )}
       {open && !unlocked && <PinPad pinGate={pinGate} />}
       {open && unlocked && pinGate.token && (
         <div className="mt-4 flex flex-col gap-6">
@@ -2263,9 +2483,9 @@ function PinPad({ pinGate }: { pinGate: PinGate }) {
           <button
             type="submit"
             disabled={recovery.trim() === "" || lockedOut || reset.isPending}
-            className="rounded-lg bg-[var(--accent)] px-4 py-2 font-black text-black disabled:opacity-40"
+            className="flex-1 rounded-lg bg-[var(--accent)] px-4 py-3 font-black text-black disabled:opacity-40"
           >
-            {reset.isPending ? "Checking…" : "Reset PIN"}
+            {reset.isPending ? "Checking…" : "Reset PIN with recovery phrase"}
           </button>
           <button
             type="button"
@@ -2274,7 +2494,7 @@ function PinPad({ pinGate }: { pinGate: PinGate }) {
               setError(null);
               setNote(null);
             }}
-            className="rounded-lg bg-[var(--surface-2)] px-4 py-2 font-bold"
+            className="rounded-lg bg-[var(--surface-2)] px-4 py-3 font-bold"
           >
             Back to PIN
           </button>
@@ -2341,9 +2561,9 @@ function PinPad({ pinGate }: { pinGate: PinGate }) {
           setError(null);
           setNote(null);
         }}
-        className="self-start text-sm font-bold text-[var(--dim)] underline"
+        className="w-full rounded-lg border-2 border-amber-400 bg-amber-400/10 px-4 py-3 text-left font-black text-amber-200"
       >
-        Forgot the PIN?
+        🔑 Forgot the PIN? Reset it with your recovery phrase →
       </button>
     </div>
   );

@@ -19,6 +19,16 @@
 //   SESSION_COOKIE_SECURE — set to "1" when the app is served over HTTPS
 //                    so the session cookie is only sent over secure
 //                    connections. Leave unset for plain-HTTP local runs.
+//   APP_URL        — public URL of the app (default http://localhost:3000).
+//                    Forgot-password emails link back here.
+//   RESEND_API_KEY — Resend API key for forgot-password emails. Without
+//                    it the reset flow still answers, but no email goes
+//                    out (see ./email.ts).
+//   RESEND_FROM    — sender address for reset emails, e.g.
+//                    "Chore Champions <noreply@yourdomain.com>". Resend
+//                    only delivers to arbitrary recipients from a
+//                    verified domain.
+//   RESEND_API_URL — override the Resend endpoint (tests only).
 //
 // Run with:  bun run start        (after `bun run build`)
 // Or build a bundle first: bun run build:server, then `bun dist/server.js`.
